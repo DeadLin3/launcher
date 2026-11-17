@@ -236,6 +236,7 @@ void UILaunchPage::on_root_deleted(lv_event_t *event) noexcept
         self->startup_sound_state_->alive.store(false);
         *self->carousel_alive_ = false;
         self->carousel_elements_.fill(nullptr);
+        self->grid_tiles_.clear();
         self->carousel_container_ = nullptr;
         self->left_arrow_button_ = nullptr;
         self->right_arrow_button_ = nullptr;
@@ -268,6 +269,7 @@ void UILaunchPage::on_owned_obj_deleted(lv_event_t *event) noexcept
         if (self->carousel_container_ == target) {
             self->carousel_container_ = nullptr;
             self->carousel_elements_.fill(nullptr);
+            self->grid_tiles_.clear();
             self->left_arrow_button_ = nullptr;
             self->right_arrow_button_ = nullptr;
         }
@@ -308,6 +310,15 @@ void UILaunchPage::refresh_carousel()
     if (!launch_)
         return;
 
+    if (grid_mode_) {
+        if (grid_tiles_.size() != launch_->app_count()) {
+            rebuild_grid();
+        } else {
+            update_grid_selection(true);
+        }
+        return;
+    }
+
     set_page_slider_position(launch_->current_app_index());
 
     for (size_t slot = 0; slot < launcher_carousel_layout::kPanelCount; ++slot) {
@@ -325,7 +336,11 @@ void UILaunchPage::reload_home_icons(const std::vector<std::string> &icon_paths)
     replacement.rebuild(icon_paths);
     home_icon_pool_.swap(replacement);
 
-    // Keep the old pool alive until every image widget no longer references it.
+    if (grid_mode_) {
+        rebuild_grid();
+        return;
+    }
+
     for (size_t slot = 0; slot < launcher_carousel_layout::kPanelCount; ++slot)
         set_panel_icon(panel(slot), {});
     set_page_slider_range(icon_paths.size(), launch_ ? launch_->current_app_index() : 0);

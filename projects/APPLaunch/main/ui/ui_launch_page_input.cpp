@@ -87,31 +87,44 @@ void UILaunchPage::handle_home_key(lv_event_t *event)
     {
         switch (code)
         {
+        case KEY_G:
+            audio_play_switch();
+            toggle_home_layout();
+            break;
+
         case KEY_UP:
+            if (grid_mode_) {
+                audio_play_switch();
+                move_grid_selection(-1, 0);
+            }
             break;
 
         case KEY_DOWN:
+            if (grid_mode_) {
+                audio_play_switch();
+                move_grid_selection(1, 0);
+            }
             break;
 
         case KEY_LEFT:
-        {
-            if (navigation_.keyboard_navigation_enabled())
-            {
+            if (grid_mode_) {
+                audio_play_switch();
+                move_grid_selection(0, -1);
+            } else if (navigation_.keyboard_navigation_enabled()) {
                 audio_play_switch();
                 switch_right();
             }
-        }
-        break;
+            break;
 
         case KEY_RIGHT:
-        {
-            if (navigation_.keyboard_navigation_enabled())
-            {
+            if (grid_mode_) {
+                audio_play_switch();
+                move_grid_selection(0, 1);
+            } else if (navigation_.keyboard_navigation_enabled()) {
                 audio_play_switch();
                 switch_left();
             }
-        }
-        break;
+            break;
 
         default:
             break;

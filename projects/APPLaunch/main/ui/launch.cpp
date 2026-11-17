@@ -193,6 +193,13 @@ void Launch::select_previous_app()
     if (previous >= 0) current_app = previous;
 }
 
+void Launch::select_app_index(std::size_t index)
+{
+    if (app_list.empty()) return;
+    if (index >= app_list.size()) index = app_list.size() - 1;
+    current_app = static_cast<int>(index);
+}
+
 std::size_t Launch::app_count() const
 {
     return app_list.size();

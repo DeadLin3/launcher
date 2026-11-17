@@ -13,8 +13,11 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <string>
+#include <sys/stat.h>
 
 namespace {
 
@@ -264,16 +267,111 @@ void UILaunchPage::update_carousel_item(lv_obj_t *panel, lv_obj_t *label,
     set_panel_icon(panel, icon);
 }
 
+static std::string layout_pref_path()
+{
+    const char *home = std::getenv("HOME");
+    std::string base = (home && home[0]) ? home : "/home/dead";
+    return base + "/.config/applaunch/home_layout";
+}
+
+void UILaunchPage::load_home_layout_pref()
+{
+    if (layout_pref_loaded_) return;
+    layout_pref_loaded_ = true;
+    std::ifstream in(layout_pref_path());
+    std::string val;
+    if (in >> val) {
+        grid_mode_ = (val != "carousel");
+    }
+}
+
+void UILaunchPage::save_home_layout_pref() const
+{
+    const char *home = std::getenv("HOME");
+    std::string dir = std::string((home && home[0]) ? home : "/home/dead") + "/.config/applaunch";
+    mkdir(dir.c_str(), 0755);
+    std::ofstream out(layout_pref_path(), std::ios::trunc);
+    if (out) {
+        out << (grid_mode_ ? "grid" : "carousel") << "\n";
+    }
+}
+
+void UILaunchPage::toggle_home_layout()
+{
+    grid_mode_ = !grid_mode_;
+    save_home_layout_pref();
+    create_app_container(content_container());
+    refresh_carousel();
+}
+
 void UILaunchPage::create_screen()
 {
-    const bool complete = carousel_container_ && left_arrow_button_ && right_arrow_button_ &&
-        std::all_of(carousel_elements_.begin(), carousel_elements_.end(),
-                    [](lv_obj_t *element) { return element != nullptr; });
-    if (!complete)
-        create_app_container(content_container());
+    load_home_layout_pref();
+    if (grid_mode_) {
+        if (!carousel_container_)
+            create_app_container(content_container());
+    } else {
+        const bool complete = carousel_container_ && left_arrow_button_ && right_arrow_button_ &&
+            std::all_of(carousel_elements_.begin(), carousel_elements_.end(),
+                        [](lv_obj_t *element) { return element != nullptr; });
+        if (!complete)
+            create_app_container(content_container());
+    }
 }
 
 void UILaunchPage::create_app_container(lv_obj_t *parent)
+{
+    if (!parent)
+        return;
+    load_home_layout_pref();
+    if (grid_mode_)
+        create_grid_container(parent);
+    else
+        create_carousel_container(parent);
+}
+
+void UILaunchPage::create_grid_container(lv_obj_t *parent)
+{
+
+    lv_obj_t *container = lv_obj_create(parent);
+    if (!container) return;
+    lv_obj_set_size(container, 320, 150);
+    lv_obj_set_align(container, LV_ALIGN_CENTER);
+    lv_obj_clear_flag(container, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(container, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(container, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_style_bg_opa(container, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(container, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_left(container, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(container, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(container, 4, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(container, 4, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(container, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(container, 6, LV_PART_MAIN);
+    lv_obj_set_layout(container, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(container, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(container, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+    *carousel_alive_ = false;
+    if (carousel_container_) lv_obj_delete(carousel_container_);
+    carousel_alive_ = std::make_shared<bool>(true);
+    carousel_container_ = container;
+    carousel_elements_.fill(nullptr);
+    left_arrow_button_ = nullptr;
+    right_arrow_button_ = nullptr;
+    grid_tiles_.clear();
+
+    lv_obj_add_event_cb(carousel_container_, on_owned_obj_deleted, LV_EVENT_DELETE, this);
+    if (!home_key_registered_ && screen()) {
+        lv_obj_add_event_cb(screen(), on_home_key, (lv_event_code_t)LV_EVENT_KEYBOARD, this);
+        home_key_registered_ = true;
+    }
+
+    rebuild_grid();
+}
+
+void UILaunchPage::create_carousel_container(lv_obj_t *parent)
 {
     if (!parent)
         return;
@@ -332,6 +430,7 @@ void UILaunchPage::create_app_container(lv_obj_t *parent)
     carousel_elements_ = elements;
     left_arrow_button_ = left_arrow;
     right_arrow_button_ = right_arrow;
+    grid_tiles_.clear();
 
     lv_obj_add_event_cb(carousel_elements_[kCardLeft], on_app_clicked, LV_EVENT_CLICKED, this);
     lv_obj_add_event_cb(carousel_elements_[kCardCenter], on_app_clicked, LV_EVENT_CLICKED, this);
@@ -349,5 +448,137 @@ void UILaunchPage::create_app_container(lv_obj_t *parent)
     if (!home_key_registered_ && screen()) {
         lv_obj_add_event_cb(screen(), on_home_key, (lv_event_code_t)LV_EVENT_KEYBOARD, this);
         home_key_registered_ = true;
+    }
+}
+
+void UILaunchPage::rebuild_grid()
+{
+    if (!carousel_container_ || !launch_)
+        return;
+
+    grid_tiles_.clear();
+    lv_obj_clean(carousel_container_);
+
+    const size_t count = launch_->app_count();
+    for (size_t i = 0; i < count; ++i) {
+        const app *item = launch_->app_at_index(static_cast<int>(i));
+        if (!item) continue;
+
+        lv_obj_t *tile = lv_obj_create(carousel_container_);
+        if (!tile) continue;
+        lv_obj_set_size(tile, 94, 66);
+        lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(tile, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_radius(tile, 8, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(tile, lv_color_hex(0x10141E), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(tile, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_width(tile, 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(tile, lv_color_hex(0x263042), LV_PART_MAIN);
+        lv_obj_set_style_pad_all(tile, 0, LV_PART_MAIN);
+
+        lv_obj_t *clip = lv_obj_create(tile);
+        if (clip) {
+            lv_obj_set_size(clip, 40, 40);
+            lv_obj_align(clip, LV_ALIGN_TOP_MID, 0, 4);
+            lv_obj_clear_flag(clip, static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+            lv_obj_set_style_radius(clip, 8, LV_PART_MAIN);
+            lv_obj_set_style_clip_corner(clip, true, LV_PART_MAIN);
+            lv_obj_set_style_bg_opa(clip, LV_OPA_TRANSP, LV_PART_MAIN);
+            lv_obj_set_style_border_width(clip, 0, LV_PART_MAIN);
+            lv_obj_set_style_pad_all(clip, 0, LV_PART_MAIN);
+
+            lv_obj_t *image = lv_image_create(clip);
+            if (image) {
+                lv_obj_set_size(image, 40, 40);
+                lv_obj_align(image, LV_ALIGN_CENTER, 0, 0);
+                lv_image_set_inner_align(image, LV_IMAGE_ALIGN_CENTER);
+                lv_image_set_src(image, home_icon_pool_.find(item->Icon, 80));
+                compensate_image_scale(image);
+            }
+        }
+
+        lv_obj_t *label = lv_label_create(tile);
+        if (label) {
+            lv_obj_set_width(label, 86);
+            lv_obj_set_height(label, LV_SIZE_CONTENT);
+            lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -4);
+            lv_label_set_text(label, item->Name.c_str());
+            lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+            lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+            lv_obj_set_style_text_font(
+                label,
+                launcher_fonts().get("Montserrat-Bold.ttf", 12, LV_FREETYPE_FONT_STYLE_BOLD),
+                LV_PART_MAIN);
+            lv_obj_set_style_text_color(label, lv_color_hex(0xB8C4D8), LV_PART_MAIN);
+        }
+
+        lv_obj_add_event_cb(tile, on_grid_tile_clicked, LV_EVENT_CLICKED, this);
+        grid_tiles_.push_back(tile);
+    }
+
+    update_grid_selection(true);
+}
+
+void UILaunchPage::update_grid_selection(bool scroll_into_view)
+{
+    if (!launch_ || grid_tiles_.empty())
+        return;
+
+    const size_t selected = launch_->current_app_index();
+    for (size_t i = 0; i < grid_tiles_.size(); ++i) {
+        lv_obj_t *tile = grid_tiles_[i];
+        if (!tile) continue;
+        const bool is_sel = (i == selected);
+        lv_obj_set_style_border_width(tile, is_sel ? 2 : 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(
+            tile, lv_color_hex(is_sel ? 0x00F0FF : 0x263042), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(
+            tile, lv_color_hex(is_sel ? 0x161F30 : 0x10141E), LV_PART_MAIN);
+
+        if (lv_obj_t *label = lv_obj_get_child(tile, 1)) {
+            lv_obj_set_style_text_color(
+                label, lv_color_hex(is_sel ? 0xFFFFFF : 0xB8C4D8), LV_PART_MAIN);
+            launcher_home_animation::apply_title_overflow(label, is_sel);
+        }
+    }
+
+    if (scroll_into_view && selected < grid_tiles_.size() && grid_tiles_[selected]) {
+        lv_obj_scroll_to_view(grid_tiles_[selected], LV_ANIM_ON);
+    }
+}
+
+void UILaunchPage::move_grid_selection(int delta_row, int delta_col)
+{
+    if (!launch_ || grid_tiles_.empty())
+        return;
+
+    const size_t count = grid_tiles_.size();
+    const int cur = static_cast<int>(launch_->current_app_index());
+    int next = cur + delta_row * 3 + delta_col;
+    if (next < 0) next = 0;
+    if (next >= static_cast<int>(count)) next = static_cast<int>(count) - 1;
+    if (next == cur) return;
+
+    launch_->select_app_index(static_cast<size_t>(next));
+    update_grid_selection(true);
+}
+
+void UILaunchPage::on_grid_tile_clicked(lv_event_t *event) noexcept
+{
+    if (!event) return;
+    auto *self = static_cast<UILaunchPage *>(lv_event_get_user_data(event));
+    lv_obj_t *target = static_cast<lv_obj_t *>(lv_event_get_target(event));
+    if (!self || !self->launch_ || !target) return;
+
+    for (size_t i = 0; i < self->grid_tiles_.size(); ++i) {
+        if (self->grid_tiles_[i] == target) {
+            if (self->launch_->current_app_index() == i) {
+                self->launch_selected_app();
+            } else {
+                self->launch_->select_app_index(i);
+                self->update_grid_selection(true);
+            }
+            break;
+        }
     }
 }

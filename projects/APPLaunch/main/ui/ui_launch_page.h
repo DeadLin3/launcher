@@ -80,6 +80,14 @@ private:
     };
 
     void create_app_container(lv_obj_t *parent);
+    void create_grid_container(lv_obj_t *parent);
+    void create_carousel_container(lv_obj_t *parent);
+    void toggle_home_layout();
+    void load_home_layout_pref();
+    void save_home_layout_pref() const;
+    void rebuild_grid();
+    void update_grid_selection(bool scroll_into_view);
+    void move_grid_selection(int delta_row, int delta_col);
     void switch_left();
     void switch_right();
     void fill_left_entering_slot(lv_obj_t *panel, lv_obj_t *label);
@@ -106,6 +114,7 @@ private:
     static void on_left_arrow_clicked(lv_event_t *event) noexcept;
     static void on_right_arrow_clicked(lv_event_t *event) noexcept;
     static void on_app_clicked(lv_event_t *event) noexcept;
+    static void on_grid_tile_clicked(lv_event_t *event) noexcept;
     static void on_home_key(lv_event_t *event) noexcept;
     static void on_startup_gif_event(lv_event_t *event) noexcept;
     static void on_owned_obj_deleted(lv_event_t *event) noexcept;
@@ -119,6 +128,7 @@ private:
     lv_obj_t *left_arrow_button_ = nullptr;
     lv_obj_t *right_arrow_button_ = nullptr;
     lv_obj_t *carousel_container_ = nullptr;
+    std::vector<lv_obj_t *> grid_tiles_;
     lv_timer_t *startup_sound_timer_ = nullptr;
     lv_timer_t *startup_delay_timer_ = nullptr;
     StartupTimerContext *startup_sound_context_ = nullptr;
@@ -138,4 +148,6 @@ private:
     std::shared_ptr<bool> carousel_alive_ = std::make_shared<bool>(true);
     bool home_key_registered_ = false;
     bool active_navigation_moves_next_ = false;
+    bool grid_mode_ = true;
+    bool layout_pref_loaded_ = false;
 };
